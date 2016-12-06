@@ -1,0 +1,11 @@
+/dist/docs
+/dist/coverage
+/dist/**/*.spec.d.ts
+/src
+/webpack
+*.config.js
+*.conf.js
+*.json
+*.tgz
+npm-debug.log
+.npmignore
