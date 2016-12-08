@@ -1,13 +1,9 @@
-import { HelloWorld } from "./spacewars";
+import {  } from "./spacewars";
 
-describe("Pessoa", () => {
+describe("Test", () => {
 
-    it("quando a idade é nula getIdade deve retornar 18", (done) => {
-        let h = new HelloWorld();
-        h.greet().then((greeting) => {
-            expect(greeting).toBe("Hello world!");
+    it("some test", (done) => {
             done();
-        }).catch((error) => done.fail());
     });
 
 

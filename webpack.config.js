@@ -71,6 +71,11 @@ module.exports = {
                 loader: 'ts-loader',
                 exclude: /node_modules/,
             },
+            {
+                test: /\.css/,
+                loaders: ['style', 'css'],
+                include: __dirname + '/src'
+            },
         ],
     }
 };
