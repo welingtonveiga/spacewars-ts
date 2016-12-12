@@ -6,17 +6,23 @@ export class Game {
     static starsCount : number = 100;
     static starsSpeed : number = 40;
     static enemyFreq : number = 1500;
+    static enemyShootFrequency : number = 1500;
     static speed : number = 40;
+    static shootingSpeed : number = 15;
 
     constructor (readonly scene: Scene) {}
 
     public play() : void {
-        Observable.combineLatest( this.startStream(), this.heroStream(), this.enemyStream(),
-            (stars, spaceship, enemies) =>  {
+
+        let heroStream = this.heroStream();
+
+        Observable.combineLatest( this.startStream(), heroStream, this.enemyStream(), this.heroShooting(heroStream),
+            (stars, spaceship, enemies, heroShot) =>  {
                 let drawables : Drawable[] = [];
                 stars.forEach((star)=> drawables.push(star));
                 enemies.forEach((enemy)=> drawables.push(enemy));
                 drawables.push(spaceship);
+
                 return drawables;
             })
             .sampleTime(Game.speed)
@@ -35,20 +41,46 @@ export class Game {
     }
 
     private heroStream() : Observable<Hero> {
+        let posY = this.scene.height - 30;
+        let hero = new Hero(this.scene.width/2, posY);
         return  Observable.fromEvent(this.scene.canvas, 'mousemove')
-            .map((e:MouseEvent) => new Hero(e.clientX, this.scene.height - 30))
-            .startWith(new Hero(this.scene.width, this.scene.height - 30));
+            .map((e:MouseEvent) => hero.move(e.clientX, this.scene.height - 30))
+            .startWith(hero);
     }
 
     private enemyStream() : Observable<Enemy[]> {
         return Observable.interval(Game.enemyFreq)
-                .map(()=> new Enemy(Random.next(this.scene.width), -30))
+                .map(()=> {
+                    let enemy = new Enemy(Random.next(this.scene.width), -30);
+                    Observable.interval(Game.enemyShootFrequency)
+                        .subscribe(() => enemy.attack(Game.shootingSpeed, this.scene));
+                    return enemy;
+                })
                 .scan((acc, curr) => {acc.push(curr); return acc;}, [])
                 .map((enemies)=> {
+                    enemies = enemies.filter((enemy)=>enemy.isVisible(this.scene));
                     enemies.forEach((enemy)=> enemy.move());
                     return enemies;
                 })
 
+    }
+
+    private heroShooting(heroStream: Observable<Hero>) : Observable<any> {
+
+        let playerFiring : Observable<any> =Observable.fromEvent(this.scene.canvas,'click')
+            .sampleTime(200)
+            .timestamp()
+            .startWith({});
+
+        return Observable.combineLatest(playerFiring, heroStream, (shotEvent, hero) => {
+            return {hero: hero, shot: shotEvent}
+        }).distinctUntilChanged(null, (e) => {
+            return e.shot.timestamp;
+        })
+          .scan((e)=> {
+              let hero = <Hero> (e.hero!=null?e.hero:e);
+              return hero.attack(Game.shootingSpeed, this.scene);
+        } );
     }
 }
 
@@ -74,9 +106,9 @@ class Star implements Drawable {
     }
 }
 
-class SpaceShip implements Drawable {
+abstract class SpaceObject implements Drawable {
 
-    constructor(protected x:number, protected y:number, private width:number, private color:string, private direction: string){}
+    constructor(protected x:number, protected y:number, private width:number, private color:string, readonly direction: string){}
 
     drawTo(canvas: CanvasRenderingContext2D) {
         canvas.fillStyle = this.color;
@@ -87,11 +119,73 @@ class SpaceShip implements Drawable {
         canvas.lineTo(this.x - this.width, this.y);
         canvas.fill();
     }
+
+    isVisible(scene: Scene): boolean {
+        return this.x > -40 && this.x < scene.width + 40 &&
+         	    this.y > -40 && this.y < scene.height + 40;
+    }
+
+    checkColision(object : SpaceObject) : boolean {
+        return (this.x > object.x - 20 && this.x < object.x + 20) && (this.y > object.y - 20 && this.y < object.y + 20);
+    }
+}
+
+class Shot  extends SpaceObject {
+
+    constructor(x:number, y:number, private speed: number, direction: string){
+        super(x, y, 5, "#FFFF00", direction);
+    }
+
+    move() : void {
+        let move = this.speed;
+        if (this.direction == 'up') {
+            move *= -1;
+        }
+        this.y += move;
+    }
+
+    hit(object: SpaceObject): boolean {
+        return this.checkColision(object);
+    }
+}
+
+class SpaceShip extends SpaceObject {
+
+    private shots : Shot[] = [];
+    private dead : boolean = false;
+
+    constructor(x:number, y:number, width:number, color:string, direction: string){
+        super(x, y, width, color, direction);
+    }
+
+    attack(shotSpeed : number, scene: Scene) : SpaceShip {
+        this.shots.push(new Shot(this.x, this.y, shotSpeed, this.direction));
+        this.shots = this.shots.filter((s)=>s.isVisible(scene));
+        return this;
+    }
+
+    drawTo(canvas: CanvasRenderingContext2D) {
+        super.drawTo(canvas);
+        this.shots.forEach(shot => {
+           shot.move();
+           shot.drawTo(canvas);
+        });
+    }
+
+    isDead(): boolean {
+        return this.dead;
+    }
 }
 
 class Hero extends SpaceShip {
     constructor(x:number, y:number){
         super(x, y, 25, "#FF0000", "up");
+    }
+
+    move(x: number, y:number) : Hero {
+        this.x = x;
+        this.y = y;
+        return this;
     }
 }
 
