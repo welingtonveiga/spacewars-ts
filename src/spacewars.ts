@@ -1,14 +1,15 @@
-import { Promise } from "es6-shim";
-import {Observable} from "@reactivex/rxjs";
+import {Observable, Subscription} from "@reactivex/rxjs";
 
 export class Game {
 
     static starsCount : number = 100;
     static starsSpeed : number = 40;
     static enemyFreq : number = 1500;
-    static enemyShootFrequency : number = 1500;
+    static enemyShootFrequency : number = 2500;
     static speed : number = 40;
-    static shootingSpeed : number = 15;
+    static shootingSpeed : number = 10;
+
+    private score: Score = new Score();
 
     constructor (readonly scene: Scene) {}
 
@@ -16,16 +17,39 @@ export class Game {
 
         let heroStream = this.heroStream();
 
-        Observable.combineLatest( this.startStream(), heroStream, this.enemyStream(), this.heroShooting(heroStream),
-            (stars, spaceship, enemies, heroShot) =>  {
+        let subscription = Observable.combineLatest( this.startStream(), heroStream, this.enemyStream(), this.heroShooting(heroStream),
+            (stars, spaceship, enemies, heroShot) => {
+                let round: { stars: Star[], spaceship : SpaceShip, enemies:Enemy[], heroShot: any };
+                round = { stars: stars, spaceship: spaceship, enemies: enemies, heroShot: heroShot};
+                return round;
+            })
+            .sampleTime(Game.speed)
+            .map((round) =>  {
                 let drawables : Drawable[] = [];
-                stars.forEach((star)=> drawables.push(star));
-                enemies.forEach((enemy)=> drawables.push(enemy));
-                drawables.push(spaceship);
+
+                round.stars.forEach((star)=> drawables.push(star));
+
+                if (!this.score.isGameOver()) {
+
+                    round.enemies.forEach((enemy) => drawables.push(enemy));
+                    drawables.push(round.spaceship);
+
+                    round.enemies.forEach((enemy => {
+                        if (enemy.kill(round.spaceship)) {
+                            this.score.setGameOver();
+                        }
+                        if (round.spaceship.kill(enemy)) {
+                            this.score.hit();
+                        }
+                    }));
+                } else {
+                    this.waitRestart(subscription);
+                }
+
+                drawables.push(this.score);
 
                 return drawables;
             })
-            .sampleTime(Game.speed)
             .subscribe((drawables)=>{
                 this.scene.update(drawables);
         });
@@ -53,12 +77,13 @@ export class Game {
                 .map(()=> {
                     let enemy = new Enemy(Random.next(this.scene.width), -30);
                     Observable.interval(Game.enemyShootFrequency)
+                        .filter(()=> Random.next(10)>5)
                         .subscribe(() => enemy.attack(Game.shootingSpeed, this.scene));
                     return enemy;
                 })
                 .scan((acc, curr) => {acc.push(curr); return acc;}, [])
                 .map((enemies)=> {
-                    enemies = enemies.filter((enemy)=>enemy.isVisible(this.scene));
+                    enemies = enemies.filter((enemy)=>enemy.isVisible(this.scene) && !enemy.isDead());
                     enemies.forEach((enemy)=> enemy.move());
                     return enemies;
                 })
@@ -82,10 +107,18 @@ export class Game {
               return hero.attack(Game.shootingSpeed, this.scene);
         } );
     }
+
+    private waitRestart(subscription: Subscription) {
+        Observable.fromEvent(this.scene.canvas,'click')
+            .subscribe(() => {
+                subscription.unsubscribe();
+                window.location.reload();
+            });
+    }
 }
 
 export interface Drawable {
-    drawTo(canvas: CanvasRenderingContext2D);
+    drawTo(scene : Scene);
 }
 
 class Star implements Drawable {
@@ -100,7 +133,8 @@ class Star implements Drawable {
         return this;
     }
 
-    drawTo(canvas: CanvasRenderingContext2D) {
+    drawTo(scene: Scene) {
+        let canvas : CanvasRenderingContext2D = scene.context;
         canvas.fillStyle = '#fff';
         canvas.fillRect(this.x, this.y, this.size, this.size);
     }
@@ -110,7 +144,10 @@ abstract class SpaceObject implements Drawable {
 
     constructor(protected x:number, protected y:number, private width:number, private color:string, readonly direction: string){}
 
-    drawTo(canvas: CanvasRenderingContext2D) {
+
+
+    drawTo(scene: Scene) {
+        let canvas : CanvasRenderingContext2D = scene.context;
         canvas.fillStyle = this.color;
         canvas.beginPath();
         canvas.moveTo(this.x - this.width, this.y);
@@ -130,7 +167,7 @@ abstract class SpaceObject implements Drawable {
     }
 }
 
-class Shot  extends SpaceObject {
+class Shot extends SpaceObject {
 
     constructor(x:number, y:number, private speed: number, direction: string){
         super(x, y, 5, "#FFFF00", direction);
@@ -159,17 +196,35 @@ class SpaceShip extends SpaceObject {
     }
 
     attack(shotSpeed : number, scene: Scene) : SpaceShip {
-        this.shots.push(new Shot(this.x, this.y, shotSpeed, this.direction));
-        this.shots = this.shots.filter((s)=>s.isVisible(scene));
+        if (!this.isDead()){
+            this.shots.push(new Shot(this.x, this.y, shotSpeed, this.direction));
+            this.shots = this.shots.filter((s)=>s.isVisible(scene));
+        }
         return this;
     }
 
-    drawTo(canvas: CanvasRenderingContext2D) {
-        super.drawTo(canvas);
+    drawTo(scene: Scene) {
+        let canvas : CanvasRenderingContext2D = scene.context;
+        if (!this.isDead()) {
+            super.drawTo(scene);
+        }
         this.shots.forEach(shot => {
            shot.move();
-           shot.drawTo(canvas);
+           shot.drawTo(scene);
         });
+    }
+
+    kill(object: SpaceShip) : boolean {
+        let killed = false;
+        if (!object.dead && this.shots.some((shot) => shot.hit(object))) {
+            object.setDead();
+            killed = true;
+        }
+        return killed;
+    }
+
+    setDead(): void {
+        this.dead = true;
     }
 
     isDead(): boolean {
@@ -200,9 +255,51 @@ class Enemy extends SpaceShip {
     }
 }
 
+class Score implements Drawable {
+
+    public static increment: number = 5;
+
+    private score : number = 0;
+
+    private gameOver : boolean = false;
+
+    hit() : void {
+        this.score += Score.increment;
+    }
+
+    setGameOver() : void {
+        this.gameOver = true;
+    }
+
+    isGameOver() : boolean {
+        return this.gameOver;
+    }
+
+    drawTo(scene: Scene) {
+        let canvas : CanvasRenderingContext2D = scene.context;
+
+        canvas.fillStyle = '#ffffff';
+        canvas.font = 'bold 26px sans-serif';
+        canvas.fillText('Score: ' + this.score, 40, 43);
+
+        if (this.gameOver) {
+            canvas.fillStyle = '#ffff00';
+            canvas.font = 'bold 48px sans-serif';
+            let textWidth = 280;
+            canvas.fillText('Game Over :(', scene.width / 2 - textWidth /2, scene.height/2);
+
+            canvas.font = 'bold 24px sans-serif';
+            let textHeight = 24;
+            canvas.fillText('Clique para jogar novamente...', scene.width / 2 - textWidth/2, scene.height/2 + textHeight*2);
+
+        }
+    }
+
+}
+
 
 export class Scene {
-    private context: CanvasRenderingContext2D;
+    readonly context: CanvasRenderingContext2D;
     readonly width : number;
     readonly height : number;
 
@@ -218,9 +315,8 @@ export class Scene {
     }
 
     draw(drawable : Drawable) {
-        drawable.drawTo(this.context);
+        drawable.drawTo(this);
     }
-
 
     update(drawables : Drawable[]) {
         this.drawBackground();
