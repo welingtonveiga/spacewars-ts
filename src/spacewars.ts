@@ -1,5 +1,9 @@
-import {Observable, Subscription} from "@reactivex/rxjs";
+import {Observable} from "@reactivex/rxjs";
 
+/**
+ *  The game abstraction itself, who generates the element streams,
+ *  combining them each turn and drawing these elements on the scene.
+ */
 export class Game {
 
     static starsCount : number = 100;
@@ -9,119 +13,175 @@ export class Game {
     static speed : number = 40;
     static shootingSpeed : number = 10;
 
-    private score: Score = new Score();
-
     constructor (readonly scene: Scene) {}
 
     public play() : void {
 
-        let heroStream = this.heroStream();
+        let hero = this.heroStream();
+        let stars = this.startStream();
+        let enemies = this.enemyStream();
 
-        let subscription = Observable.combineLatest( this.startStream(), heroStream, this.enemyStream(), this.heroShooting(heroStream),
-            (stars, spaceship, enemies, heroShot) => {
-                let round: { stars: Star[], spaceship : SpaceShip, enemies:Enemy[], heroShot: any };
-                round = { stars: stars, spaceship: spaceship, enemies: enemies, heroShot: heroShot};
-                return round;
-            })
+        Observable.combineLatest(stars, hero, enemies, this.combineGameElements(new Score()))
             .sampleTime(Game.speed)
-            .map((round) =>  {
-                let drawables : Drawable[] = [];
-
-                round.stars.forEach((star)=> drawables.push(star));
-
-                if (!this.score.isGameOver()) {
-
-                    round.enemies.forEach((enemy) => drawables.push(enemy));
-                    drawables.push(round.spaceship);
-
-                    round.enemies.forEach((enemy => {
-                        if (enemy.kill(round.spaceship)) {
-                            this.score.setGameOver();
-                        }
-                        if (round.spaceship.kill(enemy)) {
-                            this.score.hit();
-                        }
-                    }));
-                } else {
-                    this.waitRestart(subscription);
-                }
-
-                drawables.push(this.score);
-
-                return drawables;
-            })
-            .subscribe((drawables)=>{
-                this.scene.update(drawables);
-        });
+            .map(this.runTurn)
+            .map((elements) => elements.asDrawables())
+            .subscribe((drawables) => this.scene.update(drawables));
     }
 
+    private combineGameElements( score: Score) :  ( stars: Star[], hero : SpaceShip, enemies:Enemy[]) => GameElements {
+        return ( stars: Star[], hero : SpaceShip, enemies:Enemy[]) => new GameElements(stars, hero, enemies, score);
+    }
+
+    private runTurn(elements : GameElements) : GameElements {
+        if (!elements.score.isGameOver()) {
+            let hero = elements.spaceship;
+            elements.enemies.forEach(enemy => {
+                if (enemy.kill(hero))
+                    elements.score.setGameOver();
+                if (hero.kill(enemy))
+                    elements.score.hit();
+            });
+        }
+        return elements;
+    }
+
+
     private startStream() : Observable<Star[]> {
-        return Observable.range(1, Game.starsCount)
-            .map( () => new Star(Random.next(this.scene.width), Random.next(this.scene.height), Random.next(3)+1))
-            .toArray()
-            .flatMap((stars) => Observable
-                .interval(Game.starsSpeed).map(() => stars.map((star => star.fallUntil(this.scene.height))))
-            );
+        let stars = Observable.range(1, Game.starsCount)
+            .map(() => Star.randomGenerateAt(this.scene))
+            .toArray();
+
+        let movingStarsStream = (stars) => Observable
+            .interval(Game.starsSpeed)
+            .map(() => stars.map((star => star.fallUntil(this.scene.height))));
+
+        return stars.flatMap(movingStarsStream);
     }
 
     private heroStream() : Observable<Hero> {
-        let posY = this.scene.height - 30;
-        let hero = new Hero(this.scene.width/2, posY);
-        return  Observable.fromEvent(this.scene.canvas, 'mousemove')
+
+        let hero = Hero.createAt(this.scene);
+
+        let movement =  Observable.fromEvent(this.scene.canvas, 'mousemove')
             .map((e:MouseEvent) => hero.move(e.clientX, this.scene.height - 30))
             .startWith(hero);
-    }
 
-    private enemyStream() : Observable<Enemy[]> {
-        return Observable.interval(Game.enemyFreq)
-                .map(()=> {
-                    let enemy = new Enemy(Random.next(this.scene.width), -30);
-                    Observable.interval(Game.enemyShootFrequency)
-                        .filter(()=> Random.next(10)>5)
-                        .subscribe(() => enemy.attack(Game.shootingSpeed, this.scene));
-                    return enemy;
-                })
-                .scan((acc, curr) => {acc.push(curr); return acc;}, [])
-                .map((enemies)=> {
-                    enemies = enemies.filter((enemy)=>enemy.isVisible(this.scene) && !enemy.isDead());
-                    enemies.forEach((enemy)=> enemy.move());
-                    return enemies;
-                })
-
-    }
-
-    private heroShooting(heroStream: Observable<Hero>) : Observable<any> {
-
-        let playerFiring : Observable<any> =Observable.fromEvent(this.scene.canvas,'click')
+        let firing : Observable<any> =Observable.fromEvent(this.scene.canvas,'click')
             .sampleTime(200)
             .timestamp()
             .startWith({});
 
-        return Observable.combineLatest(playerFiring, heroStream, (shotEvent, hero) => {
+        return Observable.combineLatest(movement, firing, (hero,shotEvent) => {
             return {hero: hero, shot: shotEvent}
         }).distinctUntilChanged(null, (e) => {
             return e.shot.timestamp;
-        })
-          .scan((e)=> {
-              let hero = <Hero> (e.hero!=null?e.hero:e);
-              return hero.attack(Game.shootingSpeed, this.scene);
+        }).map((e) => {
+            return <Hero> (e.hero!=null?e.hero:e);
+        }).scan((hero)=> {
+            return hero.attack(Game.shootingSpeed, this.scene);
         } );
     }
 
-    private waitRestart(subscription: Subscription) {
-        Observable.fromEvent(this.scene.canvas,'click')
-            .subscribe(() => {
-                subscription.unsubscribe();
-                window.location.reload();
-            });
+    private enemyStream() : Observable<Enemy[]> {
+
+        let combineWithShooting = (enemy) => {
+            Observable.interval(Game.enemyShootFrequency)
+                .filter(()=> Random.next(10)>5)
+                .subscribe(() => enemy.attack(Game.shootingSpeed, this.scene));
+            return enemy;
+        };
+
+        let addMovement = (enemies)=> {
+            let stillOnGame = (enemy) =>enemy.isVisible(this.scene) && !enemy.isDead();
+            enemies = enemies.filter(stillOnGame);
+            enemies.forEach((enemy)=> enemy.move());
+            return enemies;
+        };
+
+        let addToGame = (acc, curr) => {
+            acc.push(curr);
+            return acc;
+        };
+
+        return Observable.interval(Game.enemyFreq)
+                .map(()=>new Enemy(Random.next(this.scene.width), -30))
+                .map(combineWithShooting)
+                .scan(addToGame, [])
+                .map(addMovement);
     }
+
 }
 
+/**
+ *  Each game element should be drawable, to draw itself on the game scene.
+ */
 export interface Drawable {
     drawTo(scene : Scene);
 }
 
+/**
+ *  The scene draws the game background, the game elements on the canvas,
+ *  and exposes useful information like the canvas context and his dimensions.
+ */
+export class Scene {
+    readonly context: CanvasRenderingContext2D;
+    readonly width : number;
+    readonly height : number;
+
+    constructor (readonly canvas: HTMLCanvasElement) {
+        this.context = canvas.getContext("2d");
+        this.width = canvas.width;
+        this.height = canvas.height;
+    }
+
+    drawBackground() {
+        this.context.fillStyle = '#000';
+        this.context.fillRect(0, 0, this.width, this.height);
+    }
+
+    draw(drawable : Drawable) {
+        drawable.drawTo(this);
+    }
+
+    update(drawables : Drawable[]) {
+        this.drawBackground();
+        drawables.forEach((drawable) => this.draw(drawable));
+    }
+}
+
+/**
+ *  Holder for game elements.
+ */
+class GameElements {
+
+    constructor(readonly stars: Star[],
+                readonly spaceship: SpaceShip,
+                readonly enemies: Enemy[],
+                readonly score: Score) {
+    }
+
+    public asDrawables() : Drawable[] {
+        let drawables : Drawable[] = [].concat(this.stars);
+
+        if (!this.score.isGameOver()) {
+            drawables = drawables.concat(this.enemies);
+            drawables.push(this.spaceship);
+        }
+
+        drawables.push(this.score);
+
+        return drawables;
+    }
+}
+
+/**
+ *  Stars used to give 'movement' for game.
+ */
 class Star implements Drawable {
+
+    static randomGenerateAt(scene: Scene) : Star {
+        return new Star(Random.next(scene.width), Random.next(scene.height), Random.next(3)+1);
+    }
 
     constructor(private x:number, private y:number, readonly size:number){}
 
@@ -140,11 +200,12 @@ class Star implements Drawable {
     }
 }
 
+/**
+ *  Common behaviors and characteristics for objects with triangular shapes on game, like spaceships and shots.
+ */
 abstract class SpaceObject implements Drawable {
 
     constructor(protected x:number, protected y:number, private width:number, private color:string, readonly direction: string){}
-
-
 
     drawTo(scene: Scene) {
         let canvas : CanvasRenderingContext2D = scene.context;
@@ -162,30 +223,14 @@ abstract class SpaceObject implements Drawable {
          	    this.y > -40 && this.y < scene.height + 40;
     }
 
-    checkColision(object : SpaceObject) : boolean {
+    checkCollision(object : SpaceObject) : boolean {
         return (this.x > object.x - 20 && this.x < object.x + 20) && (this.y > object.y - 20 && this.y < object.y + 20);
     }
 }
 
-class Shot extends SpaceObject {
-
-    constructor(x:number, y:number, private speed: number, direction: string){
-        super(x, y, 5, "#FFFF00", direction);
-    }
-
-    move() : void {
-        let move = this.speed;
-        if (this.direction == 'up') {
-            move *= -1;
-        }
-        this.y += move;
-    }
-
-    hit(object: SpaceObject): boolean {
-        return this.checkColision(object);
-    }
-}
-
+/**
+ *  Base class for game spaceships.
+ */
 class SpaceShip extends SpaceObject {
 
     private shots : Shot[] = [];
@@ -204,7 +249,6 @@ class SpaceShip extends SpaceObject {
     }
 
     drawTo(scene: Scene) {
-        let canvas : CanvasRenderingContext2D = scene.context;
         if (!this.isDead()) {
             super.drawTo(scene);
         }
@@ -232,7 +276,16 @@ class SpaceShip extends SpaceObject {
     }
 }
 
+/**
+ *  The hero specializations of spaceships, with particular appearance, directions and movement.
+ */
 class Hero extends SpaceShip {
+
+    static createAt(scene : Scene) {
+        let posY = scene.height - 30;
+        return new Hero(scene.width/2, posY);
+    }
+
     constructor(x:number, y:number){
         super(x, y, 25, "#FF0000", "up");
     }
@@ -244,6 +297,9 @@ class Hero extends SpaceShip {
     }
 }
 
+/**
+ *  The enemy specializations of spaceships, with particular appearance, directions and movement.
+ */
 class Enemy extends SpaceShip {
     constructor(x:number, y:number){
         super(x, y, 20, "#0000FF", "down");
@@ -255,6 +311,31 @@ class Enemy extends SpaceShip {
     }
 }
 
+/**
+ *  The shot abstractions.
+ */
+class Shot extends SpaceObject {
+
+    constructor(x:number, y:number, private speed: number, direction: string){
+        super(x, y, 5, "#FFFF00", direction);
+    }
+
+    move() : void {
+        let move = this.speed;
+        if (this.direction == 'up') {
+            move *= -1;
+        }
+        this.y += move;
+    }
+
+    hit(object: SpaceObject): boolean {
+        return this.checkCollision(object);
+    }
+}
+
+/**
+ *  The scores table abstraction, handling rules for player score points, game finish and feedback.
+ */
 class Score implements Drawable {
 
     public static increment: number = 5;
@@ -290,38 +371,10 @@ class Score implements Drawable {
 
             canvas.font = 'bold 24px sans-serif';
             let textHeight = 24;
-            canvas.fillText('Clique para jogar novamente...', scene.width / 2 - textWidth/2, scene.height/2 + textHeight*2);
-
+            canvas.fillText('Reload and try again...', scene.width / 2 - textWidth/2, scene.height/2 + textHeight*2);
         }
     }
 
-}
-
-
-export class Scene {
-    readonly context: CanvasRenderingContext2D;
-    readonly width : number;
-    readonly height : number;
-
-    constructor (readonly canvas: HTMLCanvasElement) {
-        this.context = canvas.getContext("2d");
-        this.width = canvas.width;
-        this.height = canvas.height;
-    }
-
-    drawBackground() {
-        this.context.fillStyle = '#000';
-        this.context.fillRect(0, 0, this.width, this.height);
-    }
-
-    draw(drawable : Drawable) {
-        drawable.drawTo(this);
-    }
-
-    update(drawables : Drawable[]) {
-        this.drawBackground();
-        drawables.forEach((drawable) => this.draw(drawable));
-    }
 }
 
 class Random {
