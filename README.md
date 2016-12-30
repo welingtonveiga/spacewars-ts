@@ -5,7 +5,7 @@ This is a simple game developed for RxJS studies. It's based on the 3rd chapter 
 So, you ask: **Why use TypeScript and Object Oriented approach with RxJS?** I'm not crazy. The motivation for this reading and study is understanding and use better the RxJS integration with Angular 2, which uses this stack ¯\\_(ツ)_/¯.
 
 
-![spaceship](etc/howtouse.gif)
+![spaceship](spaceship.gif)
 
 ### How to try
 
