@@ -1,6 +1,6 @@
 ## Space Wars
 
-This is a simple game developed for RxJS studies. It's based on the 3rd chapter from 'Reactive Programming with RxJS', but implemented with TypeScript using an Object Oriented approach. 
+This is a simple game developed to study RxJS. It's based on the 3rd chapter from 'Reactive Programming with RxJS', but implemented with TypeScript using an Object Oriented approach. 
 
 So, you ask: **Why use TypeScript and Object Oriented approach with RxJS?** I'm not crazy. The motivation for this reading and study is understanding and use better the RxJS integration with Angular 2, which uses this stack ¯\\_(ツ)_/¯.
 
