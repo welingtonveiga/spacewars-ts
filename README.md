@@ -1,28 +1,32 @@
 ## Space Wars
 
-This is a simple game developed to study RxJS. It's based on the 3rd chapter from 'Reactive Programming with RxJS', but implemented with TypeScript using an Object Oriented approach. 
+[2022 Update] This project was created in 2016, as a learning exercise. It's a simple "clone" of the classic space invaders implemented using RxJS based on the 3rd chapter of the book 'Reactive Programming with RxJS' - but implemented in TypeScript using an Object Oriented approach. 
 
-So, you ask: **Why use TypeScript and Object Oriented approach with RxJS?** I'm not crazy. The motivation for this reading and study is understanding and use better the RxJS integration with Angular 2, which uses this stack ¯\\_(ツ)_/¯.
+So, you ask: **Why on Earth would you want to use RxJS with TypeScript and Object Oriented?** - Don't worry, I can explain: The motivation for this reading and study was to deepen my understanding of RxJS and learn how to apply reactive building blocks to Angular 2, which used this stack ¯\\_(ツ)_/¯.
+
+Reviewing it a few years later, I ended up not using much of Angular after AngularJS (A framework named React became mainstream)  - but understanding better RxJS paid dividends in frontend and backend projects as different technologies use the same fundamental concepts.
 
 
 ![spaceship](spaceship.gif)
 
 ### How to try
 
+**Pre-requisites:**
+* nvm (<https://github.com/nvm-sh/nvm>)
+
+**Coommands:**
 ```bash
 cd <your_worksspace>
 git clone https://github.com/welingtonveiga/spacewars
 cd clonewars
-npm install webpack -g
-npm install webpack-dev-server -g
-npm install
-npm run server
+nvm use
+npm i
+npm start
 ```
-Then just go to [http://localhost:8080/webpack-dev-server/](http://localhost:8080/webpack-dev-server/), and have funny :)
+Then just go to [http://localhost:8080/webpack-dev-server/](http://localhost:8080/webpack-dev-server/), and have fun :)
 
 
 ### Next Steps
-* Study how to test with RxJS
-* Add levels
+* Add levels to the game
 * Add new enemies types with distinct behaviour
-* Increment game challenge through levels
+* Increment game challenge through the levels
