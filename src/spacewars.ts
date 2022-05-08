@@ -69,7 +69,7 @@ export class Game {
         let firing : Observable<any> =Observable.fromEvent(this.scene.canvas,'click')
             .sampleTime(200)
             .timestamp()
-            .startWith({});
+            .startWith();
 
         return Observable.combineLatest(movement, firing, (hero,shotEvent) => {
             return {hero: hero, shot: shotEvent}
@@ -240,7 +240,7 @@ class SpaceShip extends SpaceObject {
         super(x, y, width, color, direction);
     }
 
-    attack(shotSpeed : number, scene: Scene) : SpaceShip {
+    attack(shotSpeed : number, scene: Scene) : this {
         if (!this.isDead()){
             this.shots.push(new Shot(this.x, this.y, shotSpeed, this.direction));
             this.shots = this.shots.filter((s)=>s.isVisible(scene));
